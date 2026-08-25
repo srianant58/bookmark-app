@@ -189,6 +189,9 @@
   }
   .card-title:hover { text-decoration: underline; }
 
+  .card-actions { display: flex; gap: var(--space-1); flex-shrink: 0; }
+
+  .edit-btn,
   .delete-btn {
     flex-shrink: 0;
     border: none;
@@ -200,7 +203,18 @@
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
   }
+  .edit-btn:hover { color: var(--color-primary-dark); background: var(--color-primary-light); }
   .delete-btn:hover { color: var(--color-danger-hover); background: #fee2e2; }
+
+  .card-edit-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+    margin-top: var(--space-1);
+  }
+  .btn-sm { padding: 6px 12px; font-size: 0.85rem; }
+  .btn-secondary { background: var(--color-bg); color: var(--color-text); border: 1px solid var(--color-border); }
+  .btn-secondary:hover { background: var(--color-border); }
 
   .card-url {
     display: block;
@@ -349,6 +363,7 @@
   let bookmarks = [];
   let activeCategory = 'All';
   let searchTerm = '';
+  let editingId = null;
 
   function generateId() {
     if (window.crypto && typeof window.crypto.randomUUID === 'function') {
@@ -434,6 +449,8 @@
   }
 
   function cardTemplate(bookmark) {
+    if (bookmark.id === editingId) return editCardTemplate(bookmark);
+
     const notesHtml = bookmark.notes
       ? `<p class="card-notes">${escapeHtml(bookmark.notes)}</p>`
       : '';
@@ -441,12 +458,42 @@
       <article class="card">
         <div class="card-header">
           <a class="card-title" href="${escapeHtml(bookmark.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(bookmark.title)}">${escapeHtml(bookmark.title)}</a>
-          <button type="button" class="delete-btn" data-delete-id="${escapeHtml(bookmark.id)}" aria-label="Delete bookmark">✕</button>
+          <div class="card-actions">
+            <button type="button" class="edit-btn" data-edit-id="${escapeHtml(bookmark.id)}" aria-label="Edit bookmark">✎</button>
+            <button type="button" class="delete-btn" data-delete-id="${escapeHtml(bookmark.id)}" aria-label="Delete bookmark">✕</button>
+          </div>
         </div>
         <span class="card-badge">${escapeHtml(bookmark.category)}</span>
         <span class="card-url" title="${escapeHtml(bookmark.url)}">${escapeHtml(bookmark.url)}</span>
         ${notesHtml}
       </article>
+    `;
+  }
+
+  function editCardTemplate(bookmark) {
+    return `
+      <form class="card" data-edit-form-id="${escapeHtml(bookmark.id)}" novalidate>
+        <div class="form-field">
+          <label for="edit-title-${escapeHtml(bookmark.id)}">Title</label>
+          <input id="edit-title-${escapeHtml(bookmark.id)}" name="title" type="text" value="${escapeHtml(bookmark.title)}" required>
+        </div>
+        <div class="form-field">
+          <label for="edit-url-${escapeHtml(bookmark.id)}">URL</label>
+          <input id="edit-url-${escapeHtml(bookmark.id)}" name="url" type="url" value="${escapeHtml(bookmark.url)}" required>
+        </div>
+        <div class="form-field">
+          <label for="edit-category-${escapeHtml(bookmark.id)}">Category</label>
+          <input id="edit-category-${escapeHtml(bookmark.id)}" name="category" type="text" list="category-options" value="${escapeHtml(bookmark.category)}" required>
+        </div>
+        <div class="form-field">
+          <label for="edit-notes-${escapeHtml(bookmark.id)}">Notes</label>
+          <textarea id="edit-notes-${escapeHtml(bookmark.id)}" name="notes" rows="2">${escapeHtml(bookmark.notes)}</textarea>
+        </div>
+        <div class="card-edit-actions">
+          <button type="button" class="btn btn-secondary btn-sm" data-cancel-edit-id="${escapeHtml(bookmark.id)}">Cancel</button>
+          <button type="submit" class="btn btn-primary btn-sm">Save</button>
+        </div>
+      </form>
     `;
   }
 
@@ -536,14 +583,58 @@
 
   function handleGridClick(e) {
     const deleteBtn = e.target.closest('[data-delete-id]');
-    if (!deleteBtn) return;
-    const id = deleteBtn.dataset.deleteId;
-    const bookmark = bookmarks.find(b => b.id === id);
-    if (bookmark && confirm(`Delete "${bookmark.title}"?`)) {
-      bookmarks = bookmarks.filter(b => b.id !== id);
-      saveBookmarks();
-      renderAll();
+    if (deleteBtn) {
+      const id = deleteBtn.dataset.deleteId;
+      const bookmark = bookmarks.find(b => b.id === id);
+      if (bookmark && confirm(`Delete "${bookmark.title}"?`)) {
+        bookmarks = bookmarks.filter(b => b.id !== id);
+        if (editingId === id) editingId = null;
+        saveBookmarks();
+        renderAll();
+      }
+      return;
     }
+
+    const editBtn = e.target.closest('[data-edit-id]');
+    if (editBtn) {
+      editingId = editBtn.dataset.editId;
+      renderGrid();
+      return;
+    }
+
+    const cancelBtn = e.target.closest('[data-cancel-edit-id]');
+    if (cancelBtn) {
+      editingId = null;
+      renderGrid();
+    }
+  }
+
+  function handleEditSubmit(e) {
+    const form = e.target.closest('[data-edit-form-id]');
+    if (!form) return;
+    e.preventDefault();
+
+    const title = form.title.value.trim();
+    const urlRaw = form.url.value.trim();
+    const category = form.category.value.trim();
+    const notes = form.notes.value.trim();
+
+    if (!title || !urlRaw || !category) {
+      form.reportValidity();
+      return;
+    }
+
+    const bookmark = bookmarks.find(b => b.id === form.dataset.editFormId);
+    if (bookmark) {
+      bookmark.title = title;
+      bookmark.url = normalizeUrl(urlRaw);
+      bookmark.category = category;
+      bookmark.notes = notes;
+      saveBookmarks();
+    }
+
+    editingId = null;
+    renderAll();
   }
 
   function attachEventListeners() {
@@ -551,6 +642,7 @@
     document.getElementById('search-input').addEventListener('input', handleSearchInput);
     document.getElementById('category-chips').addEventListener('click', handleChipClick);
     document.getElementById('bookmark-grid').addEventListener('click', handleGridClick);
+    document.getElementById('bookmark-grid').addEventListener('submit', handleEditSubmit);
   }
 
   document.addEventListener('DOMContentLoaded', () => {
